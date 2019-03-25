@@ -53,7 +53,7 @@ class maui_lg(custom_import('system', 'slurm_lg')):
         if 'SCRATCH' not in PATH:
             setattr(PATH, 'SCRATCH', join(os.getenv('CENTER1'), 'scratch', str(uuid4())))
 
-        super(chinook_lg, self).check()
+        super(maui_lg, self).check()
 
 
     def submit(self, workflow):
@@ -80,9 +80,6 @@ class maui_lg(custom_import('system', 'slurm_lg')):
                 + '--output %s ' % (PATH.WORKDIR+'/'+'output.log')
                 + '--ntasks=%d ' % PAR.NODESIZE
                 + '--nodes=%d ' % 1
-                + '--account=%s ' % 'nesi00263'
-                + '--partition=%s ' % 'nesi_research'
-                + '--hint=%s' % 'nomultithread'
                 + '--time=%d ' % PAR.WALLTIME
                 + findpath('seisflows.system') +'/'+ 'wrappers/submit '
                 + PATH.OUTPUT)
