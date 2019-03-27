@@ -66,16 +66,18 @@ class maui_lg(custom_import('system', 'slurm_lg')):
         # create output directories
         unix.mkdir(PATH.OUTPUT)
         unix.mkdir(PATH.WORKDIR+'/'+'output.slurm')
-
         if not exists('./scratch'): 
             unix.ln(PATH.SCRATCH, PATH.WORKDIR+'/'+'scratch')
 
         workflow.checkpoint()
-
         # prepare sbatch arguments
+        import pdb;pdb.set_trace()
         call('sbatch '
                 + '%s ' % PAR.SLURMARGS
-                + '--partition=%s ' % 't1small' # overloads SLURMARGS 
+                + '--account=%s ' % 'nesi00263'
+                + '--clusters=%s ' % 'maui'
+                + '--partition=%s ' % 'nesi_research' # overloads SLURMARGS 
+                + '--hint=%s ' % 'nomultithread'
                 + '--job-name=%s ' % PAR.TITLE
                 + '--output %s ' % (PATH.WORKDIR+'/'+'output.log')
                 + '--ntasks=%d ' % PAR.NODESIZE
@@ -83,7 +85,8 @@ class maui_lg(custom_import('system', 'slurm_lg')):
                 + '--time=%d ' % PAR.WALLTIME
                 + findpath('seisflows.system') +'/'+ 'wrappers/submit '
                 + PATH.OUTPUT)
-
+   
+ 
 
     def mpiexec(self):
         """ Specifies MPI exectuable; used to invoke solver
