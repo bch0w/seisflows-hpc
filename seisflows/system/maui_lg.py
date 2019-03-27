@@ -57,7 +57,7 @@ class maui_lg(custom_import('system', 'slurm_lg')):
 
 
     def submit(self, workflow):
-        """ Submits workflow
+        """ Submits workflow to maui_ancil cluster
         """
         # create scratch directories
         unix.mkdir(PATH.SCRATCH)
@@ -74,9 +74,8 @@ class maui_lg(custom_import('system', 'slurm_lg')):
         import pdb;pdb.set_trace()
         call('sbatch '
                 + '%s ' % PAR.SLURMARGS
-                + '--account=%s ' % 'nesi00263'
-                + '--clusters=%s ' % 'maui'
-                + '--partition=%s ' % 'nesi_research' # overloads SLURMARGS 
+                + '--clusters=%s' % 'maui_ancil'
+                + '--partition=%s ' % 'nesi_prepost'
                 + '--hint=%s ' % 'nomultithread'
                 + '--job-name=%s ' % PAR.TITLE
                 + '--output %s ' % (PATH.WORKDIR+'/'+'output.log')
@@ -85,8 +84,61 @@ class maui_lg(custom_import('system', 'slurm_lg')):
                 + '--time=%d ' % PAR.WALLTIME
                 + findpath('seisflows.system') +'/'+ 'wrappers/submit '
                 + PATH.OUTPUT)
-   
- 
+
+    def run(self, classname, method, *args, **kwargs):
+        """ Runs task multiple times in embarrassingly parallel fasion on the
+            maui cluster
+
+          Executes classname.method(*args, **kwargs) NTASK times, each time on
+          NPROC cpu cores
+        """
+        self.checkpoint(PATH.OUTPUT, classname, method, args, kwargs)
+
+        # submit job array
+        stdout = check_output(
+                   'sbatch %s ' % PAR.SLURMARGS
+                   + '--clusters=%s' % 'maui'
+                   + '--partition=%s ' % 'nesi_research'
+                   + '--job-name=%s ' % PAR.TITLE
+                   + '--nodes=%d ' % math.ceil(PAR.NPROC/float(PAR.NODESIZE))
+                   + '--ntasks-per-node=%d ' % PAR.NODESIZE
+                   + '--ntasks=%d ' % PAR.NPROC
+                   + '--time=%d ' % PAR.TASKTIME
+                   + '--array=%d-%d ' % (0,(PAR.NTASK-1)%PAR.NTASKMAX)
+                   + '--output %s ' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a')
+                   + '%s ' % (findpath('seisflows.system') +'/'+ 'wrappers/run')
+                   + '%s ' % PATH.OUTPUT
+                   + '%s ' % classname
+                   + '%s ' % method
+                   + '%s ' % PAR.ENVIRONS,
+                   shell=True)
+
+        # keep track of job ids
+        jobs = self.job_id_list(stdout, PAR.NTASK)
+
+        # check job array completion status
+        while True:
+            # wait a few seconds between queries
+            time.sleep(5)
+
+            isdone, jobs = self.job_array_status(classname, method, jobs)
+            if isdone:
+                return
+
+    def job_status(self, job):
+        """ Queries completion status of a single job
+            added a -L flag to sacct to query all clusters
+        """
+        stdout = check_output(
+            'sacct -nL -o jobid,state -j ' + job.split('_')[0],
+            shell=True)
+
+        state = ''
+        lines = stdout.strip().split('\n')
+        for line in lines:
+            if line.split()[0] == job:
+                state = line.split()[1]
+        return state
 
     def mpiexec(self):
         """ Specifies MPI exectuable; used to invoke solver
