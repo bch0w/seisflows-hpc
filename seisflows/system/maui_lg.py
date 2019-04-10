@@ -49,7 +49,7 @@ class maui_lg(custom_import('system', 'slurm_lg')):
         if 'ENVIRONS' not in PAR:
             setattr(PAR, 'ENVIRONS', '')
 
-        # where temporary files are written
+        # where temporary files are written, (overwrite scratch in paths.py)
         if 'SCRATCH' not in PATH:
             setattr(PATH, 'SCRATCH', join(os.getenv('CENTER1'), 'scratch', str(uuid4())))
 
@@ -58,6 +58,8 @@ class maui_lg(custom_import('system', 'slurm_lg')):
 
     def submit(self, workflow):
         """ Submits workflow to maui_ancil cluster
+        This needs to be run on maui_ancil because maui does not have the 
+        ability to run the command "sacct"
         """
         # create scratch directories
         unix.mkdir(PATH.SCRATCH)
@@ -70,17 +72,15 @@ class maui_lg(custom_import('system', 'slurm_lg')):
             unix.ln(PATH.SCRATCH, PATH.WORKDIR+'/'+'scratch')
 
         workflow.checkpoint()
-        # prepare sbatch arguments
-        import pdb;pdb.set_trace()
+        # Submit to maui_ancil
         call('sbatch '
                 + '%s ' % PAR.SLURMARGS
-                + '--clusters=%s' % 'maui_ancil'
+                + '--clusters=%s ' % 'maui_ancil'
                 + '--partition=%s ' % 'nesi_prepost'
-                + '--hint=%s ' % 'nomultithread'
                 + '--job-name=%s ' % PAR.TITLE
                 + '--output %s ' % (PATH.WORKDIR+'/'+'output.log')
-                + '--ntasks=%d ' % PAR.NODESIZE
-                + '--nodes=%d ' % 1
+                + '--tasks=%d ' % 1 # PAR.NODESIZE
+                + '--cpus-per-task=%d ' % 1
                 + '--time=%d ' % PAR.WALLTIME
                 + findpath('seisflows.system') +'/'+ 'wrappers/submit '
                 + PATH.OUTPUT)
@@ -94,12 +94,30 @@ class maui_lg(custom_import('system', 'slurm_lg')):
         """
         self.checkpoint(PATH.OUTPUT, classname, method, args, kwargs)
 
-        # submit job array
+        # submit job qurray
+        sbatch_command = ('sbatch %s ' % PAR.SLURMARGS
+               + '--job-name=%s ' % PAR.TITLE
+               + '--clusters=%s ' % 'maui'
+               + '--partition=%s ' % 'nesi_research'
+               + '--nodes=%d ' % math.ceil(PAR.NPROC/float(PAR.NODESIZE))
+               + '--ntasks-per-node=%d ' % PAR.NODESIZE
+               + '--ntasks=%d ' % PAR.NPROC
+               + '--time=%d ' % PAR.TASKTIME
+               + '--array=%d-%d ' % (0,(PAR.NTASK-1)%PAR.NTASKMAX)
+               + '--output %s ' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a')
+               + '%s ' % (findpath('seisflows.system') +'/'+ 'wrappers/run')
+               + '%s ' % PATH.OUTPUT
+               + '%s ' % classname
+               + '%s ' % method
+               + '%s ' % PAR.ENVIRONS
+               )
+        print sbatch_command
+
         stdout = check_output(
                    'sbatch %s ' % PAR.SLURMARGS
-                   + '--clusters=%s' % 'maui'
-                   + '--partition=%s ' % 'nesi_research'
                    + '--job-name=%s ' % PAR.TITLE
+                   + '--clusters=%s ' % 'maui'
+                   + '--partition=%s ' % 'nesi_research'
                    + '--nodes=%d ' % math.ceil(PAR.NPROC/float(PAR.NODESIZE))
                    + '--ntasks-per-node=%d ' % PAR.NODESIZE
                    + '--ntasks=%d ' % PAR.NPROC
@@ -140,8 +158,22 @@ class maui_lg(custom_import('system', 'slurm_lg')):
                 state = line.split()[1]
         return state
 
-    def mpiexec(self):
-        """ Specifies MPI exectuable; used to invoke solver
-        """
-        return 'mpirun -np %d ' % PAR.NPROC
+    def job_id_list(self, stdout, ntask):
+        """Parses job id list from sbatch standard output
+        
+        Modified because submitting jobs across clusters on maui means the 
+        phrase "on cluster X" gets appended to the end of stdout and the job #
+        is no longer stdout().split()[-1]
+
+        Instead, scan through stdout and try to find the number using float() to
+        break on words
+        """    
+        for parts in stdout.split():
+            try:
+                job_id = parts.strip() 
+                test_break = float(job_id)
+                return [job_id+str(ii) for ii in range(ntask)]
+            except ValueError:
+                continue
+    
 
