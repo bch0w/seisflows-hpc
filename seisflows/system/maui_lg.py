@@ -16,11 +16,7 @@ PATH = sys.modules['seisflows_paths']
 
 
 class maui_lg(custom_import('system', 'slurm_lg')):
-    """ System interface for University of Alaska Fairbanks CHINOOK
-
-      If you are using more than 48 cores per task, then add the following to
-      your parameter file:
-          SLURMARGS='--partition=t1standard'      
+    """ System interface for NeSI HPC maui and ancillary node maui_ancil
 
       For more informations, see 
       http://seisflows.readthedocs.org/en/latest/manual/manual.html#system-interfaces
@@ -72,13 +68,15 @@ class maui_lg(custom_import('system', 'slurm_lg')):
             unix.ln(PATH.SCRATCH, PATH.WORKDIR+'/'+'scratch')
 
         workflow.checkpoint()
+        
         # Submit to maui_ancil
         call('sbatch '
                 + '%s ' % PAR.SLURMARGS
                 + '--clusters=%s ' % 'maui_ancil'
                 + '--partition=%s ' % 'nesi_prepost'
                 + '--job-name=%s ' % PAR.TITLE
-                + '--output %s ' % (PATH.WORKDIR+'/'+'output.log')
+                + '--output=%s ' % (PATH.WORKDIR+'/'+'output.log')
+                + '--error=%s ' % (PATH.WORKDIR+'/'+'error.log')
                 + '--tasks=%d ' % 1 # PAR.NODESIZE
                 + '--cpus-per-task=%d ' % 1
                 + '--time=%d ' % PAR.WALLTIME
@@ -95,35 +93,36 @@ class maui_lg(custom_import('system', 'slurm_lg')):
         self.checkpoint(PATH.OUTPUT, classname, method, args, kwargs)
 
         # submit job qurray
-        sbatch_command = ('sbatch %s ' % PAR.SLURMARGS
-               + '--job-name=%s ' % PAR.TITLE
-               + '--clusters=%s ' % 'maui'
-               + '--partition=%s ' % 'nesi_research'
-               + '--nodes=%d ' % math.ceil(PAR.NPROC/float(PAR.NODESIZE))
-               + '--ntasks-per-node=%d ' % PAR.NODESIZE
-               + '--ntasks=%d ' % PAR.NPROC
-               + '--time=%d ' % PAR.TASKTIME
-               + '--array=%d-%d ' % (0,(PAR.NTASK-1)%PAR.NTASKMAX)
-               + '--output %s ' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a')
-               + '%s ' % (findpath('seisflows.system') +'/'+ 'wrappers/run')
-               + '%s ' % PATH.OUTPUT
-               + '%s ' % classname
-               + '%s ' % method
-               + '%s ' % PAR.ENVIRONS
-               )
-        print sbatch_command
-
+        # original sbatch command, changed for maui
+        # stdout = check_output(
+        #            'sbatch %s ' % PAR.SLURMARGS
+        #            + '--job-name=%s ' % PAR.TITLE
+        #            + '--clusters=%s ' % 'maui'
+        #            + '--partition=%s ' % 'nesi_research'
+        #            + '--nodes=%d ' % math.ceil(PAR.NPROC/float(PAR.NODESIZE))
+        #            + '--ntasks-per-node=%d ' % PAR.NODESIZE
+        #            + '--ntasks=%d ' % PAR.NPROC
+        #            + '--time=%d ' % PAR.TASKTIME
+        #            + '--array=%d-%d ' % (0,(PAR.NTASK-1)%PAR.NTASKMAX)
+        #            + '--output %s ' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a')
+        #            + '%s ' % (findpath('seisflows.system') +'/'+ 'wrappers/run')
+        #            + '%s ' % PATH.OUTPUT
+        #            + '%s ' % classname
+        #            + '%s ' % method
+        #            + '%s ' % PAR.ENVIRONS,
+        #            shell=True)
+        
         stdout = check_output(
                    'sbatch %s ' % PAR.SLURMARGS
                    + '--job-name=%s ' % PAR.TITLE
                    + '--clusters=%s ' % 'maui'
                    + '--partition=%s ' % 'nesi_research'
-                   + '--nodes=%d ' % math.ceil(PAR.NPROC/float(PAR.NODESIZE))
-                   + '--ntasks-per-node=%d ' % PAR.NODESIZE
+                   + '--cpus-per-task=%s ' % 1
+                   + '--nodes=%d ' % 2
                    + '--ntasks=%d ' % PAR.NPROC
                    + '--time=%d ' % PAR.TASKTIME
-                   + '--array=%d-%d ' % (0,(PAR.NTASK-1)%PAR.NTASKMAX)
                    + '--output %s ' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a')
+                   + '--array=%d-%d ' % (0,(PAR.NTASK-1)%PAR.NTASKMAX)
                    + '%s ' % (findpath('seisflows.system') +'/'+ 'wrappers/run')
                    + '%s ' % PATH.OUTPUT
                    + '%s ' % classname
