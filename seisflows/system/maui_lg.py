@@ -68,8 +68,8 @@ class maui_lg(custom_import('system', 'slurm_lg')):
             unix.ln(PATH.SCRATCH, PATH.WORKDIR+'/'+'scratch')
 
         workflow.checkpoint()
-        
         # Submit to maui_ancil
+        import pdb;pdb.set_trace()
         call('sbatch '
                 + '%s ' % PAR.SLURMARGS
                 + '--clusters=%s ' % 'maui_ancil'
@@ -93,31 +93,14 @@ class maui_lg(custom_import('system', 'slurm_lg')):
         self.checkpoint(PATH.OUTPUT, classname, method, args, kwargs)
 
         # submit job qurray
-        # original sbatch command, changed for maui
-        # stdout = check_output(
-        #            'sbatch %s ' % PAR.SLURMARGS
-        #            + '--job-name=%s ' % PAR.TITLE
-        #            + '--clusters=%s ' % 'maui'
-        #            + '--partition=%s ' % 'nesi_research'
-        #            + '--nodes=%d ' % math.ceil(PAR.NPROC/float(PAR.NODESIZE))
-        #            + '--ntasks-per-node=%d ' % PAR.NODESIZE
-        #            + '--ntasks=%d ' % PAR.NPROC
-        #            + '--time=%d ' % PAR.TASKTIME
-        #            + '--array=%d-%d ' % (0,(PAR.NTASK-1)%PAR.NTASKMAX)
-        #            + '--output %s ' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a')
-        #            + '%s ' % (findpath('seisflows.system') +'/'+ 'wrappers/run')
-        #            + '%s ' % PATH.OUTPUT
-        #            + '%s ' % classname
-        #            + '%s ' % method
-        #            + '%s ' % PAR.ENVIRONS,
-        #            shell=True)
-        
+        #original sbatch command, changed for maui
         stdout = check_output(
                    'sbatch %s ' % PAR.SLURMARGS
                    + '--job-name=%s ' % PAR.TITLE
                    + '--clusters=%s ' % 'maui'
                    + '--partition=%s ' % 'nesi_research'
                    + '--cpus-per-task=%s ' % 1
+                   # + '--nodes=%d ' % math.ceil(PAR.NPROC/float(PAR.NODESIZE))
                    + '--nodes=%d ' % 2
                    + '--ntasks=%d ' % PAR.NPROC
                    + '--time=%d ' % PAR.TASKTIME
@@ -134,6 +117,46 @@ class maui_lg(custom_import('system', 'slurm_lg')):
         jobs = self.job_id_list(stdout, PAR.NTASK)
 
         # check job array completion status
+        while True:
+            # wait a few seconds between queries
+            time.sleep(5)
+
+            isdone, jobs = self.job_array_status(classname, method, jobs)
+            if isdone:
+                return
+        
+    def run_single(self, classname, method, *args, **kwargs):
+        """ Runs task a single time
+
+          Executes classname.method(*args, **kwargs) a single time on NPROC
+          cpu cores
+        """
+        self.checkpoint(PATH.OUTPUT, classname, method, args, kwargs)
+
+        # submit job
+        stdout = check_output(
+                   'sbatch %s ' % PAR.SLURMARGS
+                   + '--job-name=%s ' % PAR.TITLE
+                   + '--clusters=%s ' % 'maui'
+                   + '--partition=%s ' % 'nesi_research'
+                   + '--cpus-per-task=%s ' % 1
+                   + '--ntasks=%d ' % PAR.NPROC
+                   + '--nodes=%d ' % 2
+                   + '--time=%d ' % PAR.TASKTIME
+                   + '--array=%d-%d ' % (0,0)
+                   + '--output %s ' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a')
+                   + '%s ' % (findpath('seisflows.system') +'/'+ 'wrappers/run')
+                   + '%s ' % PATH.OUTPUT
+                   + '%s ' % classname
+                   + '%s ' % method
+                   + '%s ' % PAR.ENVIRONS
+                   + '%s ' % 'SEISFLOWS_TASKID=0',
+                   shell=True)
+
+        # keep track of job ids
+        jobs = self.job_id_list(stdout, 1)
+
+        # check job completion status
         while True:
             # wait a few seconds between queries
             time.sleep(5)
@@ -171,7 +194,7 @@ class maui_lg(custom_import('system', 'slurm_lg')):
             try:
                 job_id = parts.strip() 
                 test_break = float(job_id)
-                return [job_id+str(ii) for ii in range(ntask)]
+                return [job_id+'_'+str(ii) for ii in range(ntask)]
             except ValueError:
                 continue
     
