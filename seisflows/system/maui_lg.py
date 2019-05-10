@@ -5,7 +5,7 @@ import sys
 import time
 
 from os.path import abspath, basename, exists, join
-from subprocess import check_output
+from subprocess import check_output, call
 from uuid import uuid4
 from seisflows.tools import unix
 from seisflows.tools.tools import call, findpath
@@ -51,7 +51,6 @@ class maui_lg(custom_import('system', 'slurm_lg')):
 
         super(maui_lg, self).check()
 
-
     def submit(self, workflow):
         """ Submits workflow to maui_ancil cluster
         This needs to be run on maui_ancil because maui does not have the 
@@ -91,9 +90,6 @@ class maui_lg(custom_import('system', 'slurm_lg')):
           NPROC cpu cores
         """
         self.checkpoint(PATH.OUTPUT, classname, method, args, kwargs)
-
-        # submit job qurray
-        #original sbatch command, changed for maui
         stdout = check_output(
                    'sbatch %s ' % PAR.SLURMARGS
                    + '--job-name=%s ' % PAR.TITLE
@@ -151,6 +147,41 @@ class maui_lg(custom_import('system', 'slurm_lg')):
                    + '%s ' % method
                    + '%s ' % PAR.ENVIRONS
                    + '%s ' % 'SEISFLOWS_TASKID=0',
+                   shell=True)
+
+        # keep track of job ids
+        jobs = self.job_id_list(stdout, 1)
+
+        # check job completion status
+        while True:
+            # wait a few seconds between queries
+            time.sleep(5)
+
+            isdone, jobs = self.job_array_status(classname, method, jobs)
+            if isdone:
+                return
+
+    def run_preproc(self, classname, method, *args, **kwargs):
+        """ Runs task a single time. For Maui this is run on maui ancil
+        and also includes some extra arguments for eval_func
+        """
+        self.checkpoint(PATH.OUTPUT, classname, method, args, kwargs)
+
+        # submit job
+        stdout = check_output(
+                   'sbatch %s ' % PAR.SLURMARGS
+                   + '--job-name=%s ' % PAR.TITLE
+                   + '--tasks=%d ' % 1
+                   + '--cpus-per-task=%d' % 1
+                   + '--account=%s' % 'nesi00263'
+                   + '--partition=n%s' % 'nesi_prepost'
+                   + '--time=%d ' % 15  # ancil preprocessing is short
+                   + '--output %s ' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a')
+                   + '%s ' % (findpath('seisflows.system') +'/'+ 'wrappers/run')
+                   + '%s ' % PATH.OUTPUT
+                   + '%s ' % classname
+                   + '%s ' % method
+                   + '%s ' % PAR.ENVIRONS,
                    shell=True)
 
         # keep track of job ids
