@@ -68,7 +68,6 @@ class maui_lg(custom_import('system', 'slurm_lg')):
 
         workflow.checkpoint()
         # Submit to maui_ancil
-        import pdb;pdb.set_trace()
         call('sbatch '
                 + '%s ' % PAR.SLURMARGS
                 + '--clusters=%s ' % 'maui_ancil'
@@ -172,9 +171,10 @@ class maui_lg(custom_import('system', 'slurm_lg')):
                    'sbatch %s ' % PAR.SLURMARGS
                    + '--job-name=%s ' % PAR.TITLE
                    + '--tasks=%d ' % 1
-                   + '--cpus-per-task=%d' % 1
-                   + '--account=%s' % 'nesi00263'
-                   + '--partition=n%s' % 'nesi_prepost'
+                   + '--cpus-per-task=%d ' % 1
+                   + '--account=%s ' % 'nesi00263'
+                   + '--clusters=%s ' % 'maui_ancil'
+                   + '--partition=%s ' % 'nesi_prepost'
                    + '--time=%d ' % 15  # ancil preprocessing is short
                    + '--output %s ' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a')
                    + '%s ' % (findpath('seisflows.system') +'/'+ 'wrappers/run')
