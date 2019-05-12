@@ -100,7 +100,7 @@ class maui_lg(custom_import('system', 'slurm_lg')):
                    + '--ntasks=%d ' % PAR.NPROC
                    + '--time=%d ' % PAR.TASKTIME
                    + '--output %s ' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a')
-                   + '--array=%d-%d ' % (0,(PAR.NTASK-1)%PAR.NTASKMAX)
+                   + '--array=%d-%d ' % (0, (PAR.NTASK-1) % PAR.NTASKMAX)
                    + '%s ' % (findpath('seisflows.system') +'/'+ 'wrappers/run')
                    + '%s ' % PATH.OUTPUT
                    + '%s ' % classname
@@ -176,6 +176,7 @@ class maui_lg(custom_import('system', 'slurm_lg')):
                    + '--clusters=%s ' % 'maui_ancil'
                    + '--partition=%s ' % 'nesi_prepost'
                    + '--time=%d ' % 15  # ancil preprocessing is short
+                   + '--array=%d-%d ' % (0, (PAR.NTASK - 1) % PAR.NTASKMAX)
                    + '--output %s ' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a')
                    + '%s ' % (findpath('seisflows.system') +'/'+ 'wrappers/run')
                    + '%s ' % PATH.OUTPUT
