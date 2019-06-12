@@ -37,18 +37,35 @@ class maui_lg(custom_import('system', 'slurm_lg')):
         if 'MPIEXEC' not in PAR:
             setattr(PAR, 'MPIEXEC', 'srun')
 
-        # optional additional SLURM arguments
-        if 'SLURMARGS' not in PAR:
-            setattr(PAR, 'SLURMARGS', '--partition=t1small')
-
         # optional environment variable list VAR1=val1,VAR2=val2,...
         if 'ENVIRONS' not in PAR:
             setattr(PAR, 'ENVIRONS', '')
-
-        # where temporary files are written, (overwrite scratch in paths.py)
-        if 'SCRATCH' not in PATH:
-            setattr(PATH, 'SCRATCH', join(os.getenv('CENTER1'), 'scratch', str(uuid4())))
-
+        
+        # NeSI cluster Maui and Maui Anciliary Node specific variables
+        if 'ACCOUNT' not in PAR:
+            raise Exception()        
+    
+        if 'MAIN_CLUSTER' not in PAR:
+            setattr(PAR, 'MAIN_CLUSTER', 'maui')
+              
+        if 'MAIN_PARTITION' not in PAR:
+            setattr(PAR, 'MAIN_PARTITION', 'nesi_research')
+    
+        if 'ANCIL_CLUSTER' not in PAR:
+            setattr(PAR, 'ANCIL_CLUSTER', 'maui_ancil')
+        
+        if 'ANCIL_PARTITION' not in PAR:
+            setattr(PAR, 'ANCIL_PARTITION', 'nesi_prepost')
+        
+        if 'ANCIL_TASKTIME' not in PAR:
+            setattr(PAR, 'ANCIL_TASKTIME', PAR.TASKTIME)
+    
+        if 'CPUS_PER_TASK' not in PAR:
+            setattr(PAR, 'CPUS_PER_TASK', 1)
+        
+        if 'MAIL_ADDRESS' not in PAR:
+            setattr(PAR, 'MAIL_ADDRESS', '')
+        
         super(maui_lg, self).check()
 
     def submit(self, workflow):
@@ -67,19 +84,33 @@ class maui_lg(custom_import('system', 'slurm_lg')):
             unix.ln(PATH.SCRATCH, PATH.WORKDIR+'/'+'scratch')
 
         workflow.checkpoint()
-        # Submit to maui_ancil
-        call('sbatch '
-                + '%s ' % PAR.SLURMARGS
-                + '--clusters=%s ' % 'maui_ancil'
-                + '--partition=%s ' % 'nesi_prepost'
-                + '--job-name=%s ' % PAR.TITLE
-                + '--output=%s ' % (PATH.WORKDIR+'/'+'output.log')
-                + '--error=%s ' % (PATH.WORKDIR+'/'+'error.log')
-                + '--tasks=%d ' % 1 # PAR.NODESIZE
-                + '--cpus-per-task=%d ' % 1
-                + '--time=%d ' % PAR.WALLTIME
-                + findpath('seisflows.system') +'/'+ 'wrappers/submit '
-                + PATH.OUTPUT)
+       
+        # determine if mail notification required    
+        if PAR.MAIL_ADDRESS:    
+            mail_call = " ".join([
+                            '--mail-user=%s' % PAR.MAIL_ADDRESS,
+                            '--mail-type=ALL', 
+                            '--mail-type=TIME_LIMIT_80']
+                                 )
+        else:
+            mail_call = ''
+        
+        # Submit to maui_ancil and send mail notifications
+        call(" ".join([
+            'sbatch',
+            '%s' % PAR.SLURMARGS,
+            '--clusters=%s' % PAR.ANCIL_CLUSTER,
+            '--partition=%s' % PAR.ANCIL_PARTITION,
+            '--job-name=%s' % PAR.TITLE,
+            '--output=%s' % os.path.join(PATH.WORKDIR, 'output.log'),
+            '--error=%s' % os.path.join(PATH.WORKDIR, 'error.log'),
+            '--tasks=%d' % 1,
+            '--cpus-per-task=%d' % 1,
+            '--time=%d' % PAR.WALLTIME,
+            mail_call,
+            findpath('seisflows.system') +'/'+ 'wrappers/submit ',
+            PATH.OUTPUT])
+            )
 
     def run(self, classname, method, *args, **kwargs):
         """ Runs task multiple times in embarrassingly parallel fasion on the
@@ -89,24 +120,25 @@ class maui_lg(custom_import('system', 'slurm_lg')):
           NPROC cpu cores
         """
         self.checkpoint(PATH.OUTPUT, classname, method, args, kwargs)
-        stdout = check_output(
-                   'sbatch %s ' % PAR.SLURMARGS
-                   + '--job-name=%s ' % PAR.TITLE
-                   + '--clusters=%s ' % 'maui'
-                   + '--partition=%s ' % 'nesi_research'
-                   + '--cpus-per-task=%s ' % 1
-                   # + '--nodes=%d ' % math.ceil(PAR.NPROC/float(PAR.NODESIZE))
-                   + '--nodes=%d ' % 2
-                   + '--ntasks=%d ' % PAR.NPROC
-                   + '--time=%d ' % PAR.TASKTIME
-                   + '--output %s ' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a')
-                   + '--array=%d-%d ' % (0, (PAR.NTASK-1) % PAR.NTASKMAX)
-                   + '%s ' % (findpath('seisflows.system') +'/'+ 'wrappers/run')
-                   + '%s ' % PATH.OUTPUT
-                   + '%s ' % classname
-                   + '%s ' % method
-                   + '%s ' % PAR.ENVIRONS,
-                   shell=True)
+        stdout = check_output(" ".join([
+            'sbatch',
+            '%s' % PAR.SLURMARGS,
+            '--job-name=%s' % PAR.TITLE,
+            '--clusters=%s' % PAR.MAIN_CLUSTER,
+            '--partition=%s' % PAR.MAIN_PARTITION,
+            '--cpus-per-task=%s' % PAR.CPUS_PER_TASK,
+            '--nodes=%d' % math.ceil(PAR.NPROC/float(PAR.NODESIZE)),
+            '--ntasks=%d' % PAR.NPROC,
+            '--time=%d' % PAR.TASKTIME,
+            '--output %s' % os.path.join(PATH.WORKDIR, 'output.slurm/'+'%A_%a'),
+            '--array=%d-%d' % (0, (PAR.NTASK-1) % PAR.NTASKMAX),
+            '%s' % (findpath('seisflows.system') +'/'+ 'wrappers/run'),
+            '%s' % PATH.OUTPUT,
+            '%s' % classname,
+            '%s' % method,
+            '%s' % PAR.ENVIRONS]),
+            shell=True
+            )
 
         # keep track of job ids
         jobs = self.job_id_list(stdout, PAR.NTASK)
@@ -129,24 +161,25 @@ class maui_lg(custom_import('system', 'slurm_lg')):
         self.checkpoint(PATH.OUTPUT, classname, method, args, kwargs)
 
         # submit job
-        stdout = check_output(
-                   'sbatch %s ' % PAR.SLURMARGS
-                   + '--job-name=%s ' % PAR.TITLE
-                   + '--clusters=%s ' % 'maui'
-                   + '--partition=%s ' % 'nesi_research'
-                   + '--cpus-per-task=%s ' % 1
-                   + '--ntasks=%d ' % PAR.NPROC
-                   + '--nodes=%d ' % 2
-                   + '--time=%d ' % PAR.TASKTIME
-                   + '--array=%d-%d ' % (0,0)
-                   + '--output %s ' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a')
-                   + '%s ' % (findpath('seisflows.system') +'/'+ 'wrappers/run')
-                   + '%s ' % PATH.OUTPUT
-                   + '%s ' % classname
-                   + '%s ' % method
-                   + '%s ' % PAR.ENVIRONS
-                   + '%s ' % 'SEISFLOWS_TASKID=0',
-                   shell=True)
+        stdout = check_output(" ".join([
+            'sbatch', 
+            '%s ' % PAR.SLURMARGS,
+            '--job-name=%s' % PAR.TITLE,
+            '--clusters=%s' % PAR.MAIN_CLUSTER,
+            '--partition=%s' % PAR.MAIN_PARTITION,
+            '--cpus-per-task=%s' % PAR.CPUS_PER_TASK,
+            '--ntasks=%d' % PAR.NPROC,
+            '--nodes=%d' % math.ceil(PAR.NPROC/float(PAR.NODESIZE)),
+            '--time=%d' % PAR.TASKTIME,
+            '--array=%d-%d' % (0,0),
+            '--output %s' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a'),
+            '%s' % (findpath('seisflows.system') +'/'+ 'wrappers/run'),
+            '%s' % PATH.OUTPUT,
+            '%s' % classname,
+            '%s' % method,
+            '%s' % PAR.ENVIRONS,
+            '%s' % 'SEISFLOWS_TASKID=0']),
+            shell=True)
 
         # keep track of job ids
         jobs = self.job_id_list(stdout, 1)
@@ -160,30 +193,32 @@ class maui_lg(custom_import('system', 'slurm_lg')):
             if isdone:
                 return
 
-    def run_preproc(self, classname, method, *args, **kwargs):
+    def run_ancil(self, classname, method, *args, **kwargs):
         """ Runs task a single time. For Maui this is run on maui ancil
         and also includes some extra arguments for eval_func
         """
         self.checkpoint(PATH.OUTPUT, classname, method, args, kwargs)
 
         # submit job
-        stdout = check_output(
-                   'sbatch %s ' % PAR.SLURMARGS
-                   + '--job-name=%s ' % PAR.TITLE
-                   + '--tasks=%d ' % 1
-                   + '--cpus-per-task=%d ' % 1
-                   + '--account=%s ' % 'nesi00263'
-                   + '--clusters=%s ' % 'maui_ancil'
-                   + '--partition=%s ' % 'nesi_prepost'
-                   + '--time=%d ' % 15  # ancil preprocessing is short
-                   + '--array=%d-%d ' % (0, (PAR.NTASK - 1) % PAR.NTASKMAX)
-                   + '--output %s ' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a')
-                   + '%s ' % (findpath('seisflows.system') +'/'+ 'wrappers/run')
-                   + '%s ' % PATH.OUTPUT
-                   + '%s ' % classname
-                   + '%s ' % method
-                   + '%s ' % PAR.ENVIRONS,
-                   shell=True)
+        stdout = check_output(" ".join([
+            'sbatch', 
+            '%s' % PAR.SLURMARGS,
+            '--job-name=%s' % PAR.TITLE,
+            '--tasks=%d' % 1,
+            '--cpus-per-task=%d' % PAR.CPUS_PER_TASK,
+            '--account=%s' % PAR.ACCOUNT,
+            '--clusters=%s' % PAR.ANCIL_CLUSTER,
+            '--partition=%s' % PAR.ANCIL_PARTITION,
+            '--time=%d' % PAR.ANCIL_TASKTIME,
+            '--array=%d-%d' % (0, (PAR.NTASK - 1) % PAR.NTASKMAX),
+            '--output %s' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a'),
+            '%s' % (findpath('seisflows.system') +'/'+ 'wrappers/run'),
+            '%s' % PATH.OUTPUT,
+            '%s' % classname,
+            '%s' % method,
+            '%s' % PAR.ENVIRONS]),
+            shell=True
+            )
 
         # keep track of job ids
         jobs = self.job_id_list(stdout, 1)
