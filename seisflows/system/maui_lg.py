@@ -5,7 +5,7 @@ import sys
 import time
 
 from os.path import abspath, basename, exists, join
-from subprocess import check_output, call
+from subprocess import check_output, call, CalledProcessError
 from uuid import uuid4
 from seisflows.tools import unix
 from seisflows.tools.tools import call, findpath
@@ -31,7 +31,7 @@ class maui_lg(custom_import('system', 'slurm_lg')):
 
         # number of cores per node
         if 'NODESIZE' not in PAR:
-            setattr(PAR, 'NODESIZE', 24)
+            setattr(PAR, 'NODESIZE', 40)
 
         # how to invoke executables
         if 'MPIEXEC' not in PAR:
@@ -59,13 +59,23 @@ class maui_lg(custom_import('system', 'slurm_lg')):
         
         if 'ANCIL_TASKTIME' not in PAR:
             setattr(PAR, 'ANCIL_TASKTIME', PAR.TASKTIME)
-    
+
+        # if number of nodes not given, automatically calculate.
+        # if the 'nomultithread' hint is given, the number of nodes will need 
+        # to be manually set above this auto calculation         
+        if 'NODES' not in PAR:
+            setattr(PAR, 'NODES', math.ceil(PAR.NPROC/float(PAR.NODESIZE)))
+
         if 'CPUS_PER_TASK' not in PAR:
             setattr(PAR, 'CPUS_PER_TASK', 1)
         
-        if 'MAIL_ADDRESS' not in PAR:
-            setattr(PAR, 'MAIL_ADDRESS', '')
-        
+        if 'WITH_OPENMP' not in PAR:
+            setattr(PAR, 'WITH_OPENMP', False)
+        if PAR.WITH_OPENMP:
+        # Make sure that y * z = c * x; where x=nodes, y=ntasks= z=cpus-per-task
+        # and c=number of cores per node, if using OpenMP
+            assert(PAR.NPROC * PAR.CPUS_PER_TASK == PAR.NODESIZE * PAR.NODES)
+
         super(maui_lg, self).check()
 
     def submit(self, workflow):
@@ -83,36 +93,65 @@ class maui_lg(custom_import('system', 'slurm_lg')):
         if not exists('./scratch'): 
             unix.ln(PATH.SCRATCH, PATH.WORKDIR+'/'+'scratch')
 
+        # if resuming, rename the old log files so they don't get overwritten
+        output_log = os.path.join(PATH.WORKDIR, 'output.log')
+        error_log = os.path.join(PATH.WORKDIR, 'error.log')
+        for log in [output_log, error_log]:
+            log_prior = log + '_prior'
+            log_temp = log + '_temp'
+            if os.path.exists(log):
+                # If a prior log exists, move to temp file and then rewrite 
+                # with new log file
+                if os.path.exists(log_prior):
+                    os.rename(log_prior, log_temp)
+                    with open(log_prior, 'w') as f_out:
+                        for fid in [log_temp, log]:
+                            with open(fid) as f_in:
+                                f_out.write(f_in.read())
+                    unix.rm(log_temp)
+                else:
+                    os.rename(log, log_prior)
+                    
         workflow.checkpoint()
-       
-        # determine if mail notification required    
-        if PAR.MAIL_ADDRESS:    
-            mail_call = " ".join([
-                            '--mail-user=%s' % PAR.MAIL_ADDRESS,
-                            '--mail-type=ALL', 
-                            '--mail-type=TIME_LIMIT_80']
-                                 )
-        else:
-            mail_call = ''
-        
-        # Submit to maui_ancil and send mail notifications
+               
+        # Submit to maui_ancil 
         call(" ".join([
             'sbatch',
             '%s' % PAR.SLURMARGS,
+            '--account=%s' % PAR.ACCOUNT,
             '--clusters=%s' % PAR.ANCIL_CLUSTER,
             '--partition=%s' % PAR.ANCIL_PARTITION,
-            '--job-name=%s' % PAR.TITLE,
-            '--output=%s' % os.path.join(PATH.WORKDIR, 'output.log'),
-            '--error=%s' % os.path.join(PATH.WORKDIR, 'error.log'),
-            '--tasks=%d' % 1,
+            '--job-name=%s' %  PAR.TITLE + "_master",
+            '--output=%s' % output_log,
+            '--error=%s' % error_log,
+            '--ntasks=%d' % 1,
             '--cpus-per-task=%d' % 1,
             '--time=%d' % PAR.WALLTIME,
-            mail_call,
             findpath('seisflows.system') +'/'+ 'wrappers/submit ',
             PATH.OUTPUT])
             )
 
-    def run(self, classname, method, *args, **kwargs):
+    def prep_openmp(self, subprocess_call):
+        """
+        OpenMP requires some initial exports before sbatch command can be run
+        This function will append these to the 'check_output' call that 'run'
+        and 'run_single' use
+
+        :type subprocess_call: str
+        :param subprocess_call: the string that is passed to check_output
+        :rtype: str
+        :return: a prepended call with the correct export statements
+        """
+        prepended_call = " ".join([
+                    "export OMP_NUM_THREADS={};".format(PAR.CPUS_PER_TASK),
+                    "export OMP_PROC_BIND=true;",
+                    "export OMP_PLACES=cores;",
+                    subprocess_call
+                    ])
+        
+        return prepended_call
+
+    def run(self, classname, method, scale_tasktime=1, *args, **kwargs):
         """ Runs task multiple times in embarrassingly parallel fasion on the
             maui cluster
 
@@ -120,39 +159,53 @@ class maui_lg(custom_import('system', 'slurm_lg')):
           NPROC cpu cores
         """
         self.checkpoint(PATH.OUTPUT, classname, method, args, kwargs)
-        stdout = check_output(" ".join([
+        run_call = " ".join([
             'sbatch',
             '%s' % PAR.SLURMARGS,
+            '--account=%s' % PAR.ACCOUNT,
             '--job-name=%s' % PAR.TITLE,
             '--clusters=%s' % PAR.MAIN_CLUSTER,
             '--partition=%s' % PAR.MAIN_PARTITION,
             '--cpus-per-task=%s' % PAR.CPUS_PER_TASK,
-            '--nodes=%d' % math.ceil(PAR.NPROC/float(PAR.NODESIZE)),
+            '--nodes=%d' % PAR.NODES,
             '--ntasks=%d' % PAR.NPROC,
-            '--time=%d' % PAR.TASKTIME,
+            '--time=%d' % (PAR.TASKTIME * scale_tasktime),
             '--output %s' % os.path.join(PATH.WORKDIR, 'output.slurm/'+'%A_%a'),
             '--array=%d-%d' % (0, (PAR.NTASK-1) % PAR.NTASKMAX),
             '%s' % (findpath('seisflows.system') +'/'+ 'wrappers/run'),
             '%s' % PATH.OUTPUT,
             '%s' % classname,
             '%s' % method,
-            '%s' % PAR.ENVIRONS]),
-            shell=True
-            )
+            '%s' % PAR.ENVIRONS])
+        
+        if PAR.WITH_OPENMP:
+            run_call = self.prep_openmp(run_call) 
 
+        stdout = check_output(run_call, shell=True)
+        
         # keep track of job ids
         jobs = self.job_id_list(stdout, PAR.NTASK)
 
-        # check job array completion status
+        # check job completion status
+        check_status_error = 0
         while True:
             # wait a few seconds between queries
             time.sleep(5)
-
-            isdone, jobs = self.job_array_status(classname, method, jobs)
+            # Occassionally connections using 'sacct' are refused leading to job
+            # failure. Wrap in a try-except and allow a handful of failures 
+            # incase the failure was a one-off connection problem
+            try:
+                isdone, jobs = self.job_array_status(classname, method, jobs)
+            except CalledProcessError:
+                check_status_error += 1
+                if check_status_error >= 10:
+                    print "check job status with sacct failed 10 times"
+                    sys.exit(-1)
+                pass
             if isdone:
                 return
         
-    def run_single(self, classname, method, *args, **kwargs):
+    def run_single(self, classname, method, scale_tasktime=1, *args, **kwargs):
         """ Runs task a single time
 
           Executes classname.method(*args, **kwargs) a single time on NPROC
@@ -161,16 +214,17 @@ class maui_lg(custom_import('system', 'slurm_lg')):
         self.checkpoint(PATH.OUTPUT, classname, method, args, kwargs)
 
         # submit job
-        stdout = check_output(" ".join([
+        run_call = " ".join([
             'sbatch', 
             '%s ' % PAR.SLURMARGS,
+            '--account=%s' % PAR.ACCOUNT,
             '--job-name=%s' % PAR.TITLE,
             '--clusters=%s' % PAR.MAIN_CLUSTER,
             '--partition=%s' % PAR.MAIN_PARTITION,
             '--cpus-per-task=%s' % PAR.CPUS_PER_TASK,
             '--ntasks=%d' % PAR.NPROC,
-            '--nodes=%d' % math.ceil(PAR.NPROC/float(PAR.NODESIZE)),
-            '--time=%d' % PAR.TASKTIME,
+            '--nodes=%d' % PAR.NODES,
+            '--time=%d' % (PAR.TASKTIME * scale_tasktime),
             '--array=%d-%d' % (0,0),
             '--output %s' % (PATH.WORKDIR+'/'+'output.slurm/'+'%A_%a'),
             '%s' % (findpath('seisflows.system') +'/'+ 'wrappers/run'),
@@ -178,18 +232,32 @@ class maui_lg(custom_import('system', 'slurm_lg')):
             '%s' % classname,
             '%s' % method,
             '%s' % PAR.ENVIRONS,
-            '%s' % 'SEISFLOWS_TASKID=0']),
-            shell=True)
+            '%s' % 'SEISFLOWS_TASKID=0'])
 
+        if PAR.WITH_OPENMP:
+            run_call = self.prep_openmp(run_call)
+        
+        stdout = check_output(run_call, shell=True)
+        
         # keep track of job ids
         jobs = self.job_id_list(stdout, 1)
 
         # check job completion status
+        check_status_error = 0
         while True:
             # wait a few seconds between queries
             time.sleep(5)
-
-            isdone, jobs = self.job_array_status(classname, method, jobs)
+            # Occassionally connections using 'sacct' are refused leading to job
+            # failure. Wrap in a try-except and allow a handful of failures 
+            # incase the failure was a one-off connection problem
+            try:
+                isdone, jobs = self.job_array_status(classname, method, jobs)
+            except CalledProcessError:
+                check_status_error += 1
+                if check_status_error >= 10:
+                    print "check job status with sacct failed 10 times"
+                    sys.exit(-1)
+                pass
             if isdone:
                 return
 
@@ -224,11 +292,21 @@ class maui_lg(custom_import('system', 'slurm_lg')):
         jobs = self.job_id_list(stdout, 1)
 
         # check job completion status
+        check_status_error = 0
         while True:
             # wait a few seconds between queries
             time.sleep(5)
-
-            isdone, jobs = self.job_array_status(classname, method, jobs)
+            # Occassionally connections using 'sacct' are refused leading to job
+            # failure. Wrap in a try-except and allow a handful of failures 
+            # incase the failure was a one-off connection problem
+            try:
+                isdone, jobs = self.job_array_status(classname, method, jobs)
+            except CalledProcessError:
+                check_status_error += 1
+                if check_status_error >= 10:
+                    print "check job status with sacct failed 10 times"
+                    sys.exit(-1)
+                pass
             if isdone:
                 return
 
