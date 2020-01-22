@@ -121,7 +121,7 @@ class maui_lg(custom_import('system', 'slurm_lg')):
             '--account=%s' % PAR.ACCOUNT,
             '--clusters=%s' % PAR.ANCIL_CLUSTER,
             '--partition=%s' % PAR.ANCIL_PARTITION,
-            '--job-name=%s' %  PAR.TITLE + "_master",
+            '--job-name=%s' %  'M_' + PAR.TITLE,
             '--output=%s' % output_log,
             '--error=%s' % error_log,
             '--ntasks=%d' % 1,
